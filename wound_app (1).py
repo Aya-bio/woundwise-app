@@ -1,20 +1,22 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from xgboost import XGBClassifier
 
-st.set_page_config(page_title="HealMate", layout="centered")
-st.title("HealMate - AI for Wound Care")
-st.markdown("ادخل بيانات الحالة")
+st.set_page_config(page_title="HealMate AI", layout="centered")
+st.title("HealMate - النظام الذكي لعلاج الجروح")
+
+st.markdown("ادخل بيانات الحالة ليقترح الذكاء الاصطناعي العلاج المناسب ويشخص الحالة")
 
 temp = st.number_input("درجة الحرارة", 34.0, 42.0, step=0.1)
 ph = st.number_input("pH", 4.0, 9.0, step=0.1)
 moisture = st.slider("رطوبة الجرح", 0, 100)
-infection = st.selectbox("عدوى", ["Yes", "No"])
-diabetic = st.selectbox("سكري", ["Yes", "No"])
+infection = st.selectbox("عدوى؟", ["Yes", "No"])
+diabetic = st.selectbox("مريض سكري؟", ["Yes", "No"])
 wound_type = st.selectbox("نوع الجرح", ["Acute", "Chronic", "Surgical", "Minor"])
-healing = st.selectbox("يلتئم بسرعة", ["Yes", "No"])
+healing = st.selectbox("الجرح يلتئم بسرعة؟", ["Yes", "No"])
 gender = st.selectbox("النوع", ["Male", "Female"])
 age = st.slider("العمر", 1, 100)
 
@@ -30,6 +32,7 @@ df = pd.DataFrame([{
     "Age": age
 }])
 
+@st.cache_data
 def generate_data():
     np.random.seed(42)
     n = 100
@@ -58,21 +61,52 @@ def generate_data():
     df['Recommended Treatment'] = df.apply(assign_treatment, axis=1)
     return df
 
-data = generate_data()
-X = data.drop("Recommended Treatment", axis=1)
-y = data["Recommended Treatment"]
+@st.cache_resource
+def load_model():
+    data = generate_data()
+    X = data.drop("Recommended Treatment", axis=1)
+    y = data["Recommended Treatment"]
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    model = XGBClassifier(eval_metric='mlogloss', use_label_encoder=False)
+    model.fit(X_scaled, y_encoded)
+    return model, scaler, le, X.columns, y
 
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
-model = XGBClassifier(eval_metric='mlogloss', use_label_encoder=False)
-model.fit(X_scaled, y_encoded)
+model, scaler, le, feature_cols, full_labels = load_model()
 
 if st.button("اقترح العلاج"):
-    X_input_scaled = scaler.transform(df[X.columns])
+    X_input_scaled = scaler.transform(df[feature_cols])
     pred = model.predict(X_input_scaled)
     treatment = le.inverse_transform(pred)[0]
-    st.success(f"العلاج المقترح: {treatment}")
+    st.success(f"✅ العلاج المقترح: {treatment}")
+
+    # تشخيص الحالة
+    risk_score = 0
+    if df["Infection"][0] == 1:
+        risk_score += 1
+    if df["Diabetic"][0] == 1:
+        risk_score += 1
+    if df["pH"][0] < 6.8 or df["pH"][0] > 7.8:
+        risk_score += 1
+
+    if risk_score == 0:
+        status = "Stable"
+        color = "green"
+    elif risk_score == 1:
+        status = "Moderate"
+        color = "orange"
+    else:
+        status = "Critical"
+        color = "red"
+
+    st.markdown(f"<h4 style='color:{color}'>🩺 حالة الجرح: {status}</h4>", unsafe_allow_html=True)
+
+    # رسم بياني بعد النتيجة
+    chart_data = pd.Series(full_labels).value_counts()
+    fig, ax = plt.subplots()
+    chart_data.plot(kind='pie', autopct='%1.1f%%', ax=ax)
+    ax.set_ylabel('')
+    st.pyplot(fig)
+    
